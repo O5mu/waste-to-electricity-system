@@ -117,6 +117,10 @@ pressure 50–80 PSI) and evaluated on a 20 % hold-out set.
 | RMSE | 0.114 W |
 | Feature importance | Temperature 75 % · Pressure 25 % |
 
+> **Forecasting.** In the senior project, the Random Forest approach was also used to forecast
+> power output **60 minutes ahead**, reaching **91.1 % R²** within the ≤10 % error target.
+> This repository contains the real-time estimation model that runs in the dashboard.
+
 ![ML pipeline](docs/diagrams/ml-pipeline.png)
 
 ## Project structure
