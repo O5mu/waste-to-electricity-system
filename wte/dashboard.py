@@ -219,6 +219,11 @@ with st.sidebar:
             st.success("ML model loaded (Random Forest)", icon="🧠")
         else:
             st.warning("ML model missing. Run `python -m wte.train_model`.", icon="⚠️")
+        integrity = api_get("/integrity")
+        if integrity and integrity["intact"]:
+            st.success(f"Log integrity verified ({integrity['rows_checked']:,} readings)", icon="🔒")
+        elif integrity:
+            st.error(f"Log tampering detected at reading #{integrity['first_bad_id']}", icon="🚨")
     else:
         st.error("Backend API unreachable", icon="🔌")
     st.caption(f"API: `{API_URL}` · [Open API docs]({API_URL}/docs)")
@@ -395,7 +400,8 @@ with system_tab:
             #### How it works
             1. **Sensors** (K-type thermocouple, pressure transducer, voltage sensor) are read by an **Arduino**,
                which prints each sample as a JSON line over USB.
-            2. The **serial bridge** forwards every line to the **FastAPI backend**, which validates it and stores it in **SQLite**.
+            2. The **serial bridge** forwards every line to the **FastAPI backend**, which validates it and stores it in **SQLite**
+               as an append-only, hash-chained log (any edit or deletion is detectable).
             3. The backend runs the **Random Forest model** on each reading to estimate the generator's power output.
             4. This **dashboard** polls the API, raises a safety alert when chamber pressure reaches the limit,
                and charts the plant's behaviour in real time.

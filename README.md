@@ -18,6 +18,7 @@ reaches the safety limit. Everything runs on the local machine, with no cloud se
 - **Model audit view** with validation metrics, feature importance and tuned hyperparameters
 - **Hardware or simulation**: run against the real Arduino rig, or use the built-in sensor simulator
 - **Edge architecture**: SQLite storage and local inference with no external dependencies
+- **Tamper-evident log**: readings are append-only and SHA-256 hash-chained; any edit or deletion is detected (see [Data integrity](#data-integrity))
 
 ## Architecture
 
@@ -91,7 +92,22 @@ python -m wte.train_model
 | `POST` | `/update-reading` | Store a reading: `{"temperature": 101.2, "pressure": 55.4, "voltage": 13.6}` |
 | `GET` | `/latest-reading` | Most recent reading with `predicted_power_w` and `is_critical` |
 | `GET` | `/history?limit=30` | Last *N* readings (oldest first) with predictions |
+| `GET` | `/integrity` | Re-verify the hash chain over every stored reading |
 | `GET` | `/model/metrics` | Validation metrics of the trained model |
+
+## Data integrity
+
+The sensor log in SQLite is **tamper-evident** ([`wte/database.py`](wte/database.py)):
+
+- **Append-only.** Database triggers reject every `UPDATE` and `DELETE` on `sensor_readings`.
+- **Hash-chained.** Each reading stores a SHA-256 hash of its values plus the previous reading's hash, so
+  changing or removing any row — even after dropping the triggers or editing the file directly — breaks
+  the chain from that row onward.
+- **Verified.** `GET /integrity` recomputes the chain and returns the first bad row; the dashboard sidebar
+  shows the result.
+
+Removing only the newest rows leaves a shorter but valid chain. To catch that, store the `head_hash` returned
+by `/integrity` somewhere else (for example, in an operator's log) and compare it later.
 
 ## Hardware
 
@@ -119,17 +135,28 @@ pressure 50–80 PSI) and evaluated on a 20 % hold-out set.
 
 ![ML pipeline](docs/diagrams/ml-pipeline.png)
 
+## Tests
+
+```bash
+pip install pytest httpx
+pytest
+```
+
+The suite in [`tests/`](tests) checks that the log verifies, that edits and deletes are rejected, that
+tampering behind the triggers is detected, and that databases from earlier versions are upgraded.
+
 ## Project structure
 
 ```
 ├── wte/                 # Application package
 │   ├── api.py           # FastAPI backend
 │   ├── dashboard.py     # Streamlit dashboard
-│   ├── database.py      # SQLite access
+│   ├── database.py      # SQLite access (append-only, hash-chained)
 │   ├── simulator.py     # Sensor simulator
 │   ├── serial_bridge.py # Arduino → API bridge
 │   ├── train_model.py   # Dataset generation & model training
 │   └── config.py        # Settings
+├── tests/               # pytest suite (log integrity)
 ├── models/              # Trained model + validation metrics
 ├── data/                # Training dataset (SQLite DB is created here at runtime)
 ├── docs/                # Diagrams and screenshots

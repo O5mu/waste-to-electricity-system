@@ -95,6 +95,12 @@ def history(limit: int = Query(30, ge=1, le=1000)):
     return with_predictions(readings)
 
 
+@app.get("/integrity")
+def integrity():
+    """Re-verify the hash chain over every stored reading."""
+    return database.verify_chain()
+
+
 @app.get("/model/metrics")
 def model_metrics():
     if state["metrics"] is None:
