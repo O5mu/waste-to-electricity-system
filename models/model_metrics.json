@@ -1,0 +1,21 @@
+{
+  "r2_score": 0.9110691305707621,
+  "mae": 0.09140870272023216,
+  "rmse": 0.11371256418344744,
+  "features": [
+    "Temperature_C",
+    "Pressure_PSI"
+  ],
+  "feature_importance": [
+    0.7528055561207011,
+    0.2471944438792989
+  ],
+  "best_params": {
+    "rf__max_depth": 10,
+    "rf__min_samples_split": 5,
+    "rf__n_estimators": 100
+  },
+  "train_samples": 960,
+  "test_samples": 240,
+  "training_date": "2026-10-09T04:01:26"
+}
