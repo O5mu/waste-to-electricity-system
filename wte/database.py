@@ -1,6 +1,6 @@
-"""SQLite storage for sensor readings.
+"""SQLite storage for sensor readings and the operator's feed log.
 
-The log is tamper-evident:
+The feed log is append-only. The sensor log is also tamper-evident:
 
 * Triggers reject every UPDATE and DELETE, so the table is append-only through SQLite.
 * Each row stores a SHA-256 hash of its own values chained to the previous row's hash.
@@ -14,11 +14,12 @@ the latest hash elsewhere (`verify_chain()` returns it as `head_hash`).
 import hashlib
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from wte.config import DB_PATH
 
 GENESIS_HASH = "0" * 64
+TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 @contextmanager
@@ -58,16 +59,31 @@ def init_db() -> None:
         if "hash" not in columns:
             _upgrade_unchained_table(conn)
 
-        for action in ("UPDATE", "DELETE"):
-            conn.execute(
-                f"""
-                CREATE TRIGGER IF NOT EXISTS sensor_readings_no_{action.lower()}
-                BEFORE {action} ON sensor_readings
-                BEGIN
-                    SELECT RAISE(ABORT, 'sensor_readings is append-only');
-                END
-                """
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feed_events (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp    TEXT NOT NULL,
+                mass_kg      REAL NOT NULL,
+                next_feed_at TEXT NOT NULL,
+                next_mass_kg REAL NOT NULL,
+                then_feed_at TEXT NOT NULL,
+                then_mass_kg REAL NOT NULL
             )
+            """
+        )
+
+        for table in ("sensor_readings", "feed_events"):
+            for action in ("UPDATE", "DELETE"):
+                conn.execute(
+                    f"""
+                    CREATE TRIGGER IF NOT EXISTS {table}_no_{action.lower()}
+                    BEFORE {action} ON {table}
+                    BEGIN
+                        SELECT RAISE(ABORT, '{table} is append-only');
+                    END
+                    """
+                )
 
 
 def _upgrade_unchained_table(conn: sqlite3.Connection) -> None:
@@ -84,20 +100,31 @@ def _upgrade_unchained_table(conn: sqlite3.Connection) -> None:
         prev = current
 
 
+def now() -> str:
+    return datetime.now().strftime(TIME_FORMAT)
+
+
 def insert_reading(temperature: float, pressure: float, voltage: float) -> str:
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = now()
+    insert_readings([(timestamp, temperature, pressure, voltage)])
+    return timestamp
+
+
+def insert_readings(rows: list[tuple[str, float, float, float]]) -> None:
+    """Append (timestamp, temperature, pressure, voltage) rows to the chain in one transaction."""
     with connect() as conn:
         # Lock the database so two writers can't both chain onto the same previous row.
         conn.execute("BEGIN IMMEDIATE")
         last = conn.execute("SELECT hash FROM sensor_readings ORDER BY id DESC LIMIT 1").fetchone()
         prev = last["hash"] if last else GENESIS_HASH
-        conn.execute(
-            "INSERT INTO sensor_readings (timestamp, temperature, pressure, voltage, prev_hash, hash) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (timestamp, temperature, pressure, voltage, prev,
-             row_hash(prev, timestamp, temperature, pressure, voltage)),
-        )
-    return timestamp
+        for timestamp, temperature, pressure, voltage in rows:
+            current = row_hash(prev, timestamp, temperature, pressure, voltage)
+            conn.execute(
+                "INSERT INTO sensor_readings (timestamp, temperature, pressure, voltage, prev_hash, hash) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (timestamp, temperature, pressure, voltage, prev, current),
+            )
+            prev = current
 
 
 def latest_readings(limit: int) -> list[dict]:
@@ -106,6 +133,54 @@ def latest_readings(limit: int) -> list[dict]:
         rows = conn.execute(
             "SELECT timestamp, temperature, pressure, voltage FROM sensor_readings ORDER BY id DESC LIMIT ?",
             (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def latest_timestamp() -> str | None:
+    with connect() as conn:
+        row = conn.execute("SELECT timestamp FROM sensor_readings ORDER BY id DESC LIMIT 1").fetchone()
+    return row["timestamp"] if row else None
+
+
+def readings_since(timestamp: str) -> list[dict]:
+    """Readings at or after `timestamp`, oldest first."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT timestamp, temperature, pressure, voltage FROM sensor_readings WHERE timestamp >= ? ORDER BY id",
+            (timestamp,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def insert_feed(mass_kg: float, next_feed_in_min: float, next_mass_kg: float,
+                then_feed_in_min: float, then_mass_kg: float, timestamp: str | None = None) -> dict:
+    """Log a batch of waste loaded now, with the plan for the next two batches."""
+    loaded = datetime.strptime(timestamp, TIME_FORMAT) if timestamp else datetime.now()
+    feed = {
+        "timestamp": loaded.strftime(TIME_FORMAT),
+        "mass_kg": mass_kg,
+        "next_feed_at": (loaded + timedelta(minutes=next_feed_in_min)).strftime(TIME_FORMAT),
+        "next_mass_kg": next_mass_kg,
+        "then_feed_at": (loaded + timedelta(minutes=then_feed_in_min)).strftime(TIME_FORMAT),
+        "then_mass_kg": then_mass_kg,
+    }
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO feed_events (timestamp, mass_kg, next_feed_at, next_mass_kg, then_feed_at, then_mass_kg) "
+            "VALUES (:timestamp, :mass_kg, :next_feed_at, :next_mass_kg, :then_feed_at, :then_mass_kg)",
+            feed,
+        )
+    return feed
+
+
+def feeds_since(timestamp: str) -> list[dict]:
+    """Feed-log entries at or after `timestamp`, oldest first."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT timestamp, mass_kg, next_feed_at, next_mass_kg, then_feed_at, then_mass_kg "
+            "FROM feed_events WHERE timestamp >= ? ORDER BY id",
+            (timestamp,),
         ).fetchall()
     return [dict(row) for row in rows]
 

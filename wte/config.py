@@ -11,6 +11,8 @@ DB_PATH = Path(os.getenv("WTE_DB_PATH", DATA_DIR / "wte_system.db"))
 DATASET_PATH = DATA_DIR / "wte_simulation_data.csv"
 MODEL_PATH = MODELS_DIR / "wte_model.joblib"
 METRICS_PATH = MODELS_DIR / "model_metrics.json"
+FORECAST_MODEL_PATH = MODELS_DIR / "forecast_model.joblib"
+FORECAST_METRICS_PATH = MODELS_DIR / "forecast_metrics.json"
 
 API_URL = os.getenv("WTE_API_URL", "http://127.0.0.1:8000").rstrip("/")
 

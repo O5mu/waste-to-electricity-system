@@ -75,7 +75,7 @@ st.markdown(
     [data-testid="stMetric"] { background: #131c2e; padding: 1rem 1.1rem; }
     [data-testid="stMetricLabel"] p { color: #94a3b8; font-size: .78rem; font-weight: 600;
                                       letter-spacing: .06em; text-transform: uppercase; }
-    [data-testid="stMetricValue"] { font-weight: 700; }
+    [data-testid="stMetricValue"] { font-weight: 700; font-size: clamp(1.35rem, 1.9vw, 2.25rem); }
 
     .section { font-size: 1.05rem; font-weight: 600; margin: 1.25rem 0 .1rem; }
     .caption { color: #94a3b8; font-size: .85rem; margin-bottom: .5rem; }
@@ -219,6 +219,10 @@ with st.sidebar:
             st.success("ML model loaded (Random Forest)", icon="🧠")
         else:
             st.warning("ML model missing. Run `python -m wte.train_model`.", icon="⚠️")
+        if health.get("forecast_model_loaded"):
+            st.success("60-min forecast model loaded", icon="🔮")
+        else:
+            st.warning("Forecast model missing. Run `python -m wte.train_forecast`.", icon="⚠️")
         integrity = api_get("/integrity")
         if integrity and integrity["intact"]:
             st.success(f"Log integrity verified ({integrity['rows_checked']:,} readings)", icon="🔒")
@@ -298,7 +302,7 @@ def live_monitor() -> None:
         )
 
     # KPI cards
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Temperature", f"{latest['temperature']:.1f} °C",
               delta=f"{latest['temperature'] - previous['temperature']:+.1f} °C", border=True)
     c2.metric("Pressure", f"{latest['pressure']:.1f} PSI",
@@ -310,6 +314,19 @@ def live_monitor() -> None:
                   delta=f"{latest['predicted_power_w'] - previous['predicted_power_w']:+.2f} W", border=True)
     else:
         c4.metric("Power · ML estimate", "—", help="Model not loaded on the backend.", border=True)
+
+    outlook = api_get("/forecast")
+    if outlook and outlook["available"]:
+        target = pd.Timestamp(outlook["target_time"])
+        c5.metric("Forecast · 60 min", f"{outlook['predicted_power_w']:.2f} W",
+                  delta=(f"{outlook['predicted_power_w'] - latest['predicted_power_w']:+.2f} W vs now"
+                         if has_model else None),
+                  help=f"Expected generator power at {target:%H:%M}, from the last 30 min of readings and the "
+                       "feed plan. The forecast model was trained on synthetic plant data.",
+                  border=True)
+    else:
+        c5.metric("Forecast · 60 min", "—", border=True,
+                  help=outlook["reason"] if outlook else "Backend API unreachable.")
 
     # Pressure safety
     st.markdown('<div class="section">Pressure safety</div>', unsafe_allow_html=True)
@@ -350,7 +367,7 @@ with model_tab:
         st.warning("Model metrics are unavailable. Make sure the API is running and the model has been trained "
                    "with `python -m wte.train_model`.")
     else:
-        st.markdown('<div class="section">Validation results on the held-out test set</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section">Power estimate: validation results on the held-out test set</div>', unsafe_allow_html=True)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("R² score", f"{metrics['r2_score']:.3f}", border=True,
                   help="Share of the variance in power output explained by the model (1.0 = perfect).")
@@ -386,6 +403,40 @@ with model_tab:
                 )
                 st.caption("Inference runs locally on the backend; no cloud services are involved.")
 
+    outlook_metrics = api_get("/forecast/metrics")
+    st.markdown('<div class="section">60-minute power forecast</div>', unsafe_allow_html=True)
+    if not outlook_metrics:
+        st.warning("Forecast metrics are unavailable. Train the forecast with `python -m wte.train_forecast`.")
+    else:
+        st.markdown(
+            f'<div class="caption">Random Forest trained on {outlook_metrics["train_runs"]} simulated plant runs and '
+            f'scored on {outlook_metrics["test_runs"]} later runs it never saw. <b>Synthetic data</b>: no real '
+            f'plant runs have been recorded yet.</div>',
+            unsafe_allow_html=True,
+        )
+        f1, f2, f3, f4 = st.columns(4)
+        f1.metric("R² score", f"{outlook_metrics['r2_score']:.3f}", border=True)
+        f2.metric("Mean absolute error", f"{outlook_metrics['mae']:.3f} W", border=True)
+        f3.metric("RMSE", f"{outlook_metrics['rmse']:.3f} W", border=True)
+        f4.metric("Baseline MAE", f"{outlook_metrics['persistence_mae']:.3f} W", border=True,
+                  help="Error of assuming power in 60 min equals power now (no forecast).")
+
+        sample = outlook_metrics["sample_run"]
+        with st.container(border=True):
+            st.markdown('<div class="caption">One held-out run: actual power vs. the forecast made 60 minutes '
+                        'earlier</div>', unsafe_allow_html=True)
+            hours = [m / 60 for m in sample["target_minute"]]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=hours, y=sample["actual"], name="Actual", mode="lines",
+                                     line=dict(color=COLORS["power"], width=2.5)))
+            fig.add_trace(go.Scatter(x=hours, y=sample["forecast"], name="Forecast (60 min ahead)", mode="lines",
+                                     line=dict(color=COLORS["voltage"], width=2, dash="dot")))
+            fig.add_trace(go.Scatter(x=hours, y=sample["persistence"], name="Baseline (power now)", mode="lines",
+                                     line=dict(color=COLORS["muted"], width=1.5)))
+            fig.update_xaxes(title_text="Hours since start-up", ticksuffix=" h")
+            fig.update_yaxes(ticksuffix=" W")
+            show(styled(fig))
+
 
 # --- System architecture ---------------------------------------------------------------------
 
@@ -402,11 +453,14 @@ with system_tab:
                which prints each sample as a JSON line over USB.
             2. The **serial bridge** forwards every line to the **FastAPI backend**, which validates it and stores it in **SQLite**
                as an append-only, hash-chained log (any edit or deletion is detectable).
-            3. The backend runs the **Random Forest model** on each reading to estimate the generator's power output.
+            3. The backend runs the **Random Forest model** on each reading to estimate the generator's power output,
+               and a second Random Forest **forecasts power 60 minutes ahead** from the last 30 minutes of readings
+               and the operator's feed plan (trained on synthetic plant data).
             4. This **dashboard** polls the API, raises a safety alert when chamber pressure reaches the limit,
                and charts the plant's behaviour in real time.
 
-            Without hardware, the **simulator** generates realistic readings, including occasional pressure spikes.
+            Without hardware, the **simulator** generates realistic readings (warm-up, hourly waste feeds, drift and
+            occasional pressure spikes) and logs each feed.
             """
         )
     with st.expander("ML training pipeline"):
