@@ -75,6 +75,8 @@ st.markdown(
     [data-testid="stMetric"] { background: #131c2e; padding: 1rem 1.1rem; }
     [data-testid="stMetricLabel"] p { color: #94a3b8; font-size: .78rem; font-weight: 600;
                                       letter-spacing: .06em; text-transform: uppercase; }
+    [data-testid="stMetricLabel"] * { white-space: normal !important; overflow: visible !important;
+                                      text-overflow: clip !important; }
     [data-testid="stMetricValue"] { font-weight: 700; font-size: clamp(1.35rem, 1.9vw, 2.25rem); }
 
     .section { font-size: 1.05rem; font-weight: 600; margin: 1.25rem 0 .1rem; }
@@ -96,6 +98,11 @@ def api_get(path: str, **params):
     except requests.RequestException:
         pass
     return None
+
+
+def change(new: float, old: float, decimals: int) -> str:
+    """Signed difference for a metric delta; + 0.0 turns a rounded -0.00 into +0.00 so no change isn't shown as a drop."""
+    return f"{round(new - old, decimals) + 0.0:+.{decimals}f}"
 
 
 # --- Chart helpers ---------------------------------------------------------------------------
@@ -304,28 +311,29 @@ def live_monitor() -> None:
     # KPI cards
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Temperature", f"{latest['temperature']:.1f} °C",
-              delta=f"{latest['temperature'] - previous['temperature']:+.1f} °C", border=True)
+              delta=f"{change(latest['temperature'], previous['temperature'], 1)} °C", border=True)
     c2.metric("Pressure", f"{latest['pressure']:.1f} PSI",
-              delta=f"{latest['pressure'] - previous['pressure']:+.1f} PSI", delta_color="inverse", border=True)
+              delta=f"{change(latest['pressure'], previous['pressure'], 1)} PSI", delta_color="inverse", border=True)
     c3.metric("Voltage", f"{latest['voltage']:.2f} V",
-              delta=f"{latest['voltage'] - previous['voltage']:+.2f} V", border=True)
+              delta=f"{change(latest['voltage'], previous['voltage'], 2)} V", border=True)
     if has_model:
-        c4.metric("Power · ML estimate", f"{latest['predicted_power_w']:.2f} W",
-                  delta=f"{latest['predicted_power_w'] - previous['predicted_power_w']:+.2f} W", border=True)
+        c4.metric("Power now", f"{latest['predicted_power_w']:.2f} W",
+                  delta=f"{change(latest['predicted_power_w'], previous['predicted_power_w'], 2)} W", border=True,
+                  help="Generator power estimated by the ML model from the latest temperature and pressure.")
     else:
-        c4.metric("Power · ML estimate", "—", help="Model not loaded on the backend.", border=True)
+        c4.metric("Power now", "—", help="Model not loaded on the backend.", border=True)
 
     outlook = api_get("/forecast")
     if outlook and outlook["available"]:
         target = pd.Timestamp(outlook["target_time"])
-        c5.metric("Forecast · 60 min", f"{outlook['predicted_power_w']:.2f} W",
-                  delta=(f"{outlook['predicted_power_w'] - latest['predicted_power_w']:+.2f} W vs now"
+        c5.metric("Power in 1 h", f"{outlook['predicted_power_w']:.2f} W",
+                  delta=(f"{change(outlook['predicted_power_w'], latest['predicted_power_w'], 2)} W vs now"
                          if has_model else None),
-                  help=f"Expected generator power at {target:%H:%M}, from the last 30 min of readings and the "
+                  help=f"Forecast of generator power at {target:%H:%M}, from the last 30 min of readings and the "
                        "feed plan. The forecast model was trained on synthetic plant data.",
                   border=True)
     else:
-        c5.metric("Forecast · 60 min", "—", border=True,
+        c5.metric("Power in 1 h", "—", border=True,
                   help=outlook["reason"] if outlook else "Backend API unreachable.")
 
     # Pressure safety

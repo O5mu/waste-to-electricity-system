@@ -139,7 +139,7 @@ The live power estimate comes from a `StandardScaler` → `RandomForestRegressor
 
 ## 60-minute forecast
 
-The dashboard's **Forecast · 60 min** card shows the generator power expected an hour from now.
+The dashboard's **Power in 1 h** card shows the generator power expected an hour from now.
 
 **The data is synthetic.** No long recordings of the real plant exist, so the model is trained on
 runs simulated by [`wte/plant.py`](wte/plant.py): the boiler warms up from first steam, the operator
