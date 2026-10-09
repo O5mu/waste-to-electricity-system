@@ -362,47 +362,6 @@ with live_tab:
 # --- Model performance -----------------------------------------------------------------------
 
 with model_tab:
-    metrics = api_get("/model/metrics")
-    if not metrics:
-        st.warning("Model metrics are unavailable. Make sure the API is running and the model has been trained "
-                   "with `python -m wte.train_model`.")
-    else:
-        st.markdown('<div class="section">Power estimate: validation results on the held-out test set</div>', unsafe_allow_html=True)
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("R² score", f"{metrics['r2_score']:.3f}", border=True,
-                  help="Share of the variance in power output explained by the model (1.0 = perfect).")
-        m2.metric("Mean absolute error", f"{metrics['mae']:.3f} W", border=True)
-        m3.metric("RMSE", f"{metrics['rmse']:.3f} W", border=True)
-        m4.metric("Test samples", f"{metrics.get('test_samples', '—')}", border=True,
-                  help="80 / 20 train-test split of the calibrated prototype dataset.")
-
-        left, right = st.columns([3, 2], gap="medium")
-        with left:
-            with st.container(border=True):
-                st.markdown("**Feature importance**")
-                features = [f.split("_")[0] for f in metrics.get("features", ["Temperature_C", "Pressure_PSI"])]
-                importance = metrics["feature_importance"]
-                fig = go.Figure(go.Bar(
-                    x=importance, y=features, orientation="h",
-                    marker_color=[COLORS["temperature"], COLORS["pressure"]],
-                    text=[f"{v:.1%}" for v in importance], textposition="outside", cliponaxis=False,
-                ))
-                fig.update_xaxes(tickformat=".0%", range=[0, 1])
-                fig.update_layout(showlegend=False, hovermode=False)
-                show(styled(fig, height=220))
-                st.caption("Temperature dominates the prediction, consistent with the thermodynamics of the boiler.")
-        with right:
-            with st.container(border=True):
-                st.markdown("**Model configuration**")
-                params = {k.replace("rf__", ""): v for k, v in metrics["best_params"].items()}
-                st.dataframe(
-                    pd.DataFrame({"Setting": ["Algorithm", "Preprocessing", "Tuning", *params.keys(), "Trained on"],
-                                  "Value": ["Random Forest Regressor", "StandardScaler", "GridSearchCV · 5-fold",
-                                            *map(str, params.values()), str(metrics.get("training_date", "—")).replace("T", " ")]}),
-                    hide_index=True, width="stretch",
-                )
-                st.caption("Inference runs locally on the backend; no cloud services are involved.")
-
     outlook_metrics = api_get("/forecast/metrics")
     st.markdown('<div class="section">60-minute power forecast</div>', unsafe_allow_html=True)
     if not outlook_metrics:
