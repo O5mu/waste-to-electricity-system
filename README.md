@@ -15,7 +15,7 @@ machine, with no cloud services involved.
 
 - **Live monitoring** of combustion temperature, chamber pressure and generator voltage
 - **Safety alerting**: a pressure gauge and an emergency banner when pressure reaches the limit (60 PSI by default)
-- **ML power estimation**: a Random Forest regressor (R² = 0.911, MAE = 0.091 W) predicts power output from temperature and pressure
+- **ML power estimation**: a Random Forest regressor estimates the current power output from temperature and pressure
 - **60-minute power forecast**: a second Random Forest forecasts power an hour ahead from the last 30 minutes of readings and the operator's feed log (R² = 0.909 on held-out runs, **trained on synthetic data**; see [60-minute forecast](#60-minute-forecast))
 - **Model audit view** with validation metrics, feature importance and tuned hyperparameters
 - **Hardware or simulation**: run against the real Arduino rig, or use the built-in simulator of the plant's dynamics
@@ -129,18 +129,11 @@ by `/integrity` somewhere else (for example, in an operator's log) and compare i
 The Arduino prints one JSON object per line at 115200 baud, for example
 `{"temperature": 101.2, "pressure": 55.4, "voltage": 13.6}`.
 
-## Machine-learning model
+## Power estimate
 
-The model is a `StandardScaler` → `RandomForestRegressor` pipeline, tuned with 5-fold `GridSearchCV`
-on 1,200 samples calibrated to the prototype's ~6 W generator (temperature 94–118 °C,
-pressure 50–80 PSI) and evaluated on a 20 % hold-out set.
-
-| Metric | Value |
-|---|---|
-| R² | 0.911 |
-| MAE | 0.091 W |
-| RMSE | 0.114 W |
-| Feature importance | Temperature 75 % · Pressure 25 % |
+The live power estimate comes from a `StandardScaler` → `RandomForestRegressor` pipeline, tuned with
+5-fold `GridSearchCV` on 1,200 samples calibrated to the prototype's ~6 W generator (temperature
+94–118 °C, pressure 50–80 PSI). Its validation metrics are shown on the dashboard's Model Performance tab.
 
 ![ML pipeline](docs/diagrams/ml-pipeline.png)
 
