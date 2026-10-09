@@ -101,8 +101,8 @@ The sensor log in SQLite is **tamper-evident** ([`wte/database.py`](wte/database
 
 - **Append-only.** Database triggers reject every `UPDATE` and `DELETE` on `sensor_readings`.
 - **Hash-chained.** Each reading stores a SHA-256 hash of its values plus the previous reading's hash, so
-  changing or removing any row — even after dropping the triggers or editing the file directly — breaks
-  the chain from that row onward.
+  changing or removing any row breaks the chain from that row onward, even after dropping the triggers
+  or editing the file directly.
 - **Verified.** `GET /integrity` recomputes the chain and returns the first bad row; the dashboard sidebar
   shows the result.
 
